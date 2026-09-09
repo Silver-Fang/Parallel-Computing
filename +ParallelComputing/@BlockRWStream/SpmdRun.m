@@ -243,7 +243,7 @@ while ~isequaln(Data,missing)
 		Data={Data};
 	end
 	varargout=cell(1,options.NArgOut);
-	fprintf(Fid,'%s 对象%u，块%u\n',datetime,ObjectIndex,BlockIndex);
+	MATLAB.IO.LogF(Fid,'对象%u，块%u',ObjectIndex,BlockIndex);
 	if CPU
 		[varargout{:}]=BlockProcess(Data{:},ObjectData{:},ConstantArgument{:});
 	else
@@ -269,7 +269,7 @@ while ~isequaln(Data,missing)
 			%如果未有已完成的读入请求，扩张缓冲区以提高主线程的占空比
 			obj.RemoteReadAsync(IPollable,Flags{:},LastObjectIndex=ObjectIndex);
 		end
-		fprintf(Fid,'%s 等待新数据块……\n',datetime);
+		MATLAB.IO.LogF(Fid,'等待新数据块……');
 		ArgOuts=IPollable.poll(Inf);
 		if ProcessException(ArgOuts{1},CPU)
 			CPU=true;
