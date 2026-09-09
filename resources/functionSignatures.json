@@ -318,6 +318,24 @@
 				"kind": "namevalue",
 				"type": "positive",
 				"purpose": "并行池看门狗忍耐时长"
+			},
+			{
+				"name": "LogDirectory",
+				"kind": "namevalue",
+				"type": [
+					[
+						"char",
+						"row"
+					],
+					[
+						"string",
+						"scalar"
+					],
+					[
+						"folder"
+					]
+				],
+				"purpose": "日志文件存放目录"
 			}
 		]
 	},

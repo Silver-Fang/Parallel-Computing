@@ -18,7 +18,8 @@
 %[text] (1,1)function\_handle，必需参数，用户提供的处理单个数据块的函数句柄。每次读入数据块后，SpmdRun会在并行计算线程上调用该函数。其输入参数可分为3类：
 %[text] 1. 数据块参数，即IBlockRWer.Read返回的Data。如果Data是元胞数组，SpmdRun调用BlockProcess时将元胞展开，每个元胞内的数据都将作为独立参数传递给BlockProcess；否则将作为单个参数直接交给BlockProcess。因此，用户定义的读写器Read方法，如果希望将元胞数组作为单个参数传递给BlockProcess，必须在外面再套一层元胞。如果希望使用GPU计算，将可以转换为gpuArray的参数放在BlockProcess参数列表最靠前的位置。SpmdRun会在将Data交给BlockProcess之前将这些参数转换为gpuArray。指定NumGpuArguments参数，这样SpmdRun才知道要将前几个参数转换为gpuArray。这种转换只会在分配到GPU硬件时发生，CPU硬件不转换。因此IBlockRWer.Read返回的Data不应含有gpuArray。
 %[text] 2. 对象特定参数。这些参数依数据对象的不同而不同，但在同一数据对象的不同分块间相同。这部分参数由IBlockRWer.ProcessData属性提供。同样，该参数如果是元胞数组将会被展开，作为多个参数，排列在数据块参数之后传递给BlockProcess；否则作为单个参数。暂不支持将这部分参数自动转为gpuArray。
-%[text] 3. 常量参数。这些参数与读入的数据块和对象均无关，在整个工作流中保持恒定。这部分参数放在BlockProcess参数列表的最后。然后将这些常量值作为重复参数交给SpmdRun的ConstantArgument参数，SpmdRun会保存这些常量值，每次调用BlockProcess时将它们传递。不同于前两类，此处如果指定元胞数组将不会展开，而是原封不动交给BlockProcess。 \
+%[text] 3. 常量参数。这些参数与读入的数据块和对象均无关，在整个工作流中保持恒定。这部分参数放在BlockProcess参数列表的最后。然后将这些常量值作为重复参数交给SpmdRun的ConstantArgument参数，SpmdRun会保存这些常量值，每次调用BlockProcess时将它们传递。不同于前两类，此处如果指定元胞数组将不会展开，而是原封不动交给BlockProcess。
+%[text] 4. 日志文件ID，此参数仅在指定LogDirectory时才存在。此文件使用'at'模式打开，可以使用fprintf向文件追加日志行。 \
 %[text] BlockProcess会在多个独立的计算线程上并行运行，因此请勿在函数中使用共享静态资源，如persistent变量等。共享静态资源请通过IBlockRWer的ProcessData属性（对于对象内相同、对象间不同的资源），或SpmdRun的ConstantArgument参数（对象间也相同）传入。
 %[text] ### ConstantArgument
 %[text] 重复参数，提供给BlockProcess的常量参数。这些参数与当前读入的是哪个文件、第几个数据块均无关，在整个计算过程中保持为常量。SpmdRun会将这些参数保存起来，接在数据块参数之后交给BlockProcess，且值恒定不变。
@@ -34,6 +35,7 @@
 %[text] UseGpu(1,:)=1:gpuDeviceCount，要使用的GPU设备编号。如果不使用GPU，设为空数组；如果使用，则将自动为最多指定个数的进程分配GPU计算，其它进程使用CPU计算。此参数为空时，将忽略NumGpuArguments参数。
 %[text] IgnoreException(1,1)logical=false，如果设为true，将异常转发为warning，而不视为错误，程序可以继续执行
 %[text] WatchDogSeconds(1,1)double=Inf，并行池看门狗忍耐时长。如果设为Inf，则不使用看门狗。看门狗监控并行池，一旦卡死超过指定忍耐时长，就会强行终止并行池，但不会终止整个程序，仍然继续往下执行。如果不使用并行池，此项设置无效。
+%[text] LogDirectory(1,:)char=''，日志输出目录。将输出的日志文件名是\`sprintf('%u.log',spmdIndex)\`。如果指定此参数为非空，BlockProcess的最后一个参数必须接受一个日志文件ID。日志文件不仅会被BlockProcess写入，此函数内部也会向其写入额外日志，包含文件块索引
 %[text] ## 返回值
 %[text] 此函数最后会调用CollectReturn成员方法，直接返回该方法返回的CollectData和Metadata。
 %[text] CollectData(:,1)cell，每个元胞对应一个文件的计算结果。元胞内又是元胞列向量，每个元胞对应一个数据块的计算结果：如果读写器重写了Write方法，即为此Write方法的返回值；若未重写，则为包含BlockProcess每个返回值的元胞行向量。例如，如果返回m×1元胞列向量，说明输入的文件有m个；其中第a个元胞内是n×1元胞列向量，说明第a个文件被分成了n块读入；其中第b个元胞内是1×p元胞行向量，说明BlockProcess有p个返回值。
@@ -62,6 +64,7 @@ arguments
 	options.UseGpu
 	options.IgnoreException=false;
 	options.WatchDogSeconds=Inf
+	options.LogDirectory=''
 end
 HasUseGpu=isfield(options,'UseGpu');
 if HasUseGpu
@@ -158,8 +161,9 @@ end
 function SpmdMain(obj,BlockProcess,ConstantArgument,options)
 GPU=parallel.gpu.GPUDeviceManager.instance.SelectedDevice;
 CPU=isempty(GPU);
-HasMemory=isfield(options,'CpuMemory');
-HasWatchDog=isfield(options,'WatchDog');
+HasOptions=isfield(options,["CpuMemory","WatchDog"]);
+HasMemory=HasOptions(1);
+HasWatchDog=HasOptions(2);
 if HasMemory
 	CpuMemory=options.CpuMemory;
 end
@@ -215,6 +219,12 @@ if Parallel
 else
 	[Data,BlockIndex,NewOI,NewOD]=obj.LocalReadBlock(Flags{:},LastObjectIndex=ObjectIndex);
 end
+Fid=~isempty(options.LogDirectory);
+if Fid
+	Fid=fopen(fullfile(options.LogDirectory,sprintf('%u.log',spmdIndex)),'at');
+	RAII=onCleanup(@()fclose(Fid));
+	ConstantArgument{end+1}=Fid;
+end
 while ~isequaln(Data,missing)
 	if HasWatchDog
 		options.WatchDog.Feed;
@@ -233,6 +243,7 @@ while ~isequaln(Data,missing)
 		Data={Data};
 	end
 	varargout=cell(1,options.NArgOut);
+	fprintf(Fid,'%s 对象%u，块%u\n',datetime,ObjectIndex,BlockIndex);
 	if CPU
 		[varargout{:}]=BlockProcess(Data{:},ObjectData{:},ConstantArgument{:});
 	else
@@ -254,10 +265,11 @@ while ~isequaln(Data,missing)
 	end
 	if Parallel
 		obj.RemoteWriteBlock(varargout,BlockIndex);
-		if ~IPollable.QueueLength
+		if~IPollable.QueueLength
 			%如果未有已完成的读入请求，扩张缓冲区以提高主线程的占空比
 			obj.RemoteReadAsync(IPollable,Flags{:},LastObjectIndex=ObjectIndex);
 		end
+		fprintf(Fid,'%s 等待新数据块……\n',datetime);
 		ArgOuts=IPollable.poll(Inf);
 		if ProcessException(ArgOuts{1},CPU)
 			CPU=true;
