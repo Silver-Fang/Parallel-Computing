@@ -66,7 +66,7 @@ classdef PoolWatchDog<handle
 		function Stop(obj)
 			%停用看门狗。
 			%停用后的看门狗不会再删除当前并行池，但可以再次用于下次并行任务。
-			obj.DogTimer=stop;
+			obj.DogTimer.stop;
 		end
 		function delete(obj)
 			delete(obj.DataQueue);
